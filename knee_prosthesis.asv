@@ -1,0 +1,80 @@
+%% KNEE PROSTHESIS CONTROL SIMULATION
+% Joseph Belamich - EPFL Exchange Student at HKUST
+clear all; close all; clc;
+
+%% Parametres physiques
+I = 0.5;
+b = 2.0;
+k = 10.0;
+
+%% Espace d'etat
+A = [0,    1;
+    -k/I, -b/I];
+B = [0; 1/I];
+
+%% Controleur LQR
+Q = diag([2000, 50]);
+R = 0.01;
+K = lqr(A, B, Q, R);
+
+%% Temps de simulation - UN seul cycle de marche
+dt = 0.001;
+tspan = 0:dt:1.0;
+N = length(tspan);
+
+%% Trajectoire de reference - cycle de marche naturel
+% 0 a 0.6s : phase appui (genou tendu, 0 degres)
+% 0.6s a 0.8s : flexion rapide (0 a 60 degres)
+% 0.8s a 1.0s : extension (60 a 0 degres)
+theta_ref = zeros(1, N);
+for i = 1:N
+    t = tspan(i);
+    if t < 0.6
+        theta_ref(i) = 0;
+    elseif t < 0.8
+        theta_ref(i) = 60 * (t - 0.6) / 0.2;
+    else
+        theta_ref(i) = 60 * (1.0 - t) / 0.2;
+    end
+end
+theta_ref_rad = theta_ref * pi/180;
+
+%% Simulation avec LQR
+x = zeros(N, 2);
+x(1,:) = [0; 0];
+tau_hist = zeros(N, 1);
+
+for i = 1:N-1
+    x_des = [theta_ref_rad(i); 0];
+    e = x(i,:)' - x_des;
+    tau = -K * e;
+    tau_hist(i) = tau;
+    x_dot = A * x(i,:)' + B * tau;
+    x(i+1,:) = x(i,:)' + x_dot * dt;
+end
+
+%% Visualisation
+figure;
+
+subplot(3,1,1);
+plot(tspan, theta_ref, 'g--', 'LineWidth', 2); hold on;
+plot(tspan, x(:,1)*180/pi, 'b', 'LineWidth', 2);
+xlabel('Temps (s)');
+ylabel('Angle (deg)');
+title('Trajectoire du genou avec controleur LQR');
+legend('Reference', 'Reelle', 'Location', 'best');
+grid on;
+
+subplot(3,1,2);
+plot(tspan, x(:,2)*180/pi, 'r', 'LineWidth', 2);
+xlabel('Temps (s)');
+ylabel('Vitesse angulaire (deg/s)');
+title('Vitesse angulaire');
+grid on;
+
+subplot(3,1,3);
+plot(tspan, tau_hist, 'm', 'LineWidth', 2);
+xlabel('Temps (s)');
+ylabel('Couple (N.m)');
+title('Commande du moteur');
+grid on;
