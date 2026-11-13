@@ -1,103 +1,97 @@
-# knee-prosthesis-control
-Simulation of an LQR controller for a variable-stiffness knee prosthesis in MATLAB
-# Bionic Knee Prosthesis — LQR Control Simulation
+# Bionic Knee Prosthesis — Control Simulation Portfolio
 
-**Joseph Belamich | EPFL Mechanical Engineering | Exchange Student at HKUST 2026-2027**
+**Joseph Belamich | EPFL Mechanical Engineering | Exchange at HKUST 2026–2027**
+
+---
 
 ## Overview
-This project simulates an LQR-based optimal controller for a bionic knee 
-prosthesis, modeling the joint as a variable-stiffness dynamical system. 
-Inspired by recent work on variable-stiffness prosthetic devices (Herr et al., 
-2024) and impedance control (Hogan, 1985), the simulation demonstrates how 
-optimal control theory can restore natural gait in amputees.
 
-## Motivation
-Millions of people worldwide live with lower-limb amputations. Current 
-prosthetic knees struggle to reproduce natural walking biomechanics. This 
-project explores how optimal control and state estimation can bridge that gap.
+Progressive simulation of a bionic knee prosthesis controller, evolving from classical optimal control (LQR) to data-driven model-free control (DeePC). The system models a knee joint as a nonlinear rotational mass-spring-damper with actuator torque limits.
+
+The project is structured as a learning trajectory: each version adds a layer of complexity and realism.
+
+---
 
 ## System Model
-The knee joint is modeled as a rotational mass-spring-damper system:
 
-**I·θ̈ + b·θ̇ + k·θ = τ**
+The knee joint dynamics:
 
-Parameters:
-- I = 0.5 kg·m² — moment of inertia
-- b = 2.0 N·m·s/rad — joint damping  
-- k = variable N·m/rad — joint stiffness (phase-dependent)
-- τ = motor torque command (N·m)
+**I·θ̈ = −m·g·l·sin(θ) − b·θ̇ − k·θ + u**
 
-State-space form: ẋ = Ax + Bu, with x = [θ, θ̇]
+| Parameter | Value | Description |
+|---|---|---|
+| m | 4.0 kg | Shank mass |
+| l | 0.25 m | CoM distance |
+| I = ml² | 0.25 kg·m² | Moment of inertia |
+| b | 0.8 N·m·s/rad | Joint damping |
+| k | 15.0 N·m/rad | Joint stiffness |
+| u_max | ±8 N·m | Torque saturation |
 
-## Controller Design — LQR
-The LQR minimizes: **J = ∫ (xᵀQx + uᵀRu) dt**
+Reference trajectory: 15° sinusoidal gait at 1 Hz (physically achievable with u_max given the nonlinear gravity term).
 
-With Q = diag([2000, 50]) and R = 0.01.
+---
 
-Optimal gains computed via MATLAB's `lqr()` function.
+## Controllers — Comparative Results
 
-## Key Results
+| Version | Controller | RMS Error | Max Error | Model required? |
+|---|---|---|---|---|
+| v2 | **LQR** (linearized) | 3.83° | 7.71° | Yes (linear) |
+| v3 | **MPC** (receding horizon) | 0.52° | 2.54° | Yes (linear) |
+| **v5** | **DeePC** (data-driven) | **2.13°** | **7.75°** | **NO — data only** |
 
-### 1. LQR Tracking — Single Gait Cycle
-![LQR Control](fig2_lqr_control.png)
-Near-perfect trajectory tracking across a complete gait cycle (0–1s).
+DeePC beats LQR by **44%** using no physical model whatsoever — only 6000 input-output data samples.
 
-### 2. With vs Without Controller
-![Comparison](fig3_comparison.png)
-Without control the knee remains at 0°. LQR drives it to follow natural gait.
+---
 
-### 3. Multiple Gait Cycles — Stability
-![Multiple Cycles](fig4_multiple_cycles.png)
-Stable tracking maintained across 4 consecutive steps.
+## v5 — DeePC (Data-Enabled Predictive Control)
 
-### 4. Robustness to Sensor Noise
-![Noise Robustness](fig5_noise_robustness.png)
-Controller remains stable under realistic sensor noise (σ = 0.5°).
+Based on [Coulson et al., 2019](https://arxiv.org/abs/1811.05890) and the Willems fundamental lemma.
 
-### 5. LQR vs PID — Quantitative Comparison
-![Quantitative Error](fig7_quantitative_error.png)
+### Key idea
+Instead of identifying a parametric model, DeePC builds a **Hankel matrix** from open-loop input-output data. At each timestep, it finds a linear combination of data trajectories that matches the current system state ("neighborhood"), then optimizes future inputs over this local linear approximation.
 
-| Controller | RMS Tracking Error | 
+This handles nonlinearity via **Neighborhood DeePC**: only the K nearest Hankel columns (by L2 distance on past outputs) are used, approximating local LTI behavior.
+
+### Data collection strategy
+- **Feed-forward analytical**: u_ff = I·θ̈_ref + b·θ̇_ref + k·θ_ref + m·g·l·sin(θ_ref) — covers 0°→15° without saturation
+- **Multi-sinus perturbation** (20 frequencies, 0.5–20 Hz, ±1.5 N·m) — ensures persistent excitation (Willems 2005)
+- Open-loop collection → uncorrelated data → well-conditioned Hankel
+
+### Optimization problem (solved as linear system)
+
+```
+min_g  Q·‖H_yf·g − r‖² + R·‖H_uf·g‖² + λg·‖g‖² + λy·‖[H_up; H_yp]·g − [u_ini; y_ini]‖²
+```
+
+### Optimal parameters (coordinate descent + full sweep, converged)
+
+| Parameter | Value | Role |
+|---|---|---|
+| T_data | 6000 samples | Dataset size |
+| T_ini | 8 steps | Past window (state proxy) |
+| N_p | 50 steps | Prediction horizon (250 ms lookahead) |
+| Q_w | 150000 | Tracking weight |
+| R_w | 0.01 | Control effort weight |
+| λg | 9 | Tikhonov regularization |
+| λy | 60 | Past consistency |
+| N_nb | 600 | Neighborhood size (out of 5943 columns) |
+| warm-start | feed-forward | Fills initial buffer with u_ff instead of zeros |
+
+---
+
+## Files
+
+| File | Description |
 |---|---|
-| **LQR (optimal)** | **1.03°** |
-| PID (classical) | 17.05° |
-| **Improvement** | **94%** |
+| `knee_prosthesis.m` | MATLAB: LQR + variable stiffness (v1–v2) |
+| `knee_v5_deepc.py` | Python: LQR + MPC + DeePC full comparison (v5) |
+| `knee_v5_deepc.png` | Result figure: tracking, error, torque |
 
-The LQR achieves 94% lower tracking error than a classical PID controller.
-
-### 6. Variable Stiffness Control
-![Variable Stiffness](fig6_variable_stiffness.png)
-Stiffness modulated between stance (k=20 N·m/rad) and swing (k=3 N·m/rad) 
-phases, inspired by Herr et al. (2024).
-
-### 7. Kalman Filter — State Estimation
-![Kalman Filter](fig9_kalman_filter.png)
-Kalman filter reduces estimation error by 19% compared to raw sensor 
-measurements, enabling more accurate control under noisy conditions.
-
-### 8. Leg Animation
-![Animation](fig8_animation_frame.png)
-Real-time visualization of the prosthetic leg motion during LQR-controlled gait.
-
-## Summary of Findings
-- LQR achieves **1.03° RMS tracking error** vs **17.05°** for PID (**94% improvement**)
-- Variable stiffness reduces peak motor torque while maintaining tracking accuracy
-- Controller remains stable under sensor noise up to σ = 2°
-- Kalman filter improves state estimation by 19% under realistic sensor noise
+---
 
 ## References
-- Herr, H. et al. (2024). Variable-stiffness prosthesis improves biomechanics 
-  of walking across speeds. *Nature Communications*.
-- Hogan, N. (1985). Impedance Control: An Approach to Manipulation. 
-  *Journal of Dynamic Systems, Measurement and Control*.
-- Shi, L. et al. (2023). Event-based state estimation for networked 
-  control systems. *IEEE Transactions on Automatic Control*.
 
-## Tools
-MATLAB R2024 — Control System Toolbox (`lqr`, `ode45`, `care`)
-
-## Author
-**Joseph Belamich**  
-Bachelor Student, Mechanical Engineering, EPFL (GPA 5.5/6.0)  
-Exchange Student, HKUST 2026-2027  
-joseph.belamich@epfl.ch
+- Coulson, J., Lygeros, J., & Dörfler, F. (2019). *Data-Enabled Predictive Control: In the Shallows of the DeePC*. arXiv:1811.05890
+- Willems, J. C., et al. (2005). *A note on persistency of excitation*. Systems & Control Letters.
+- Herr, H., et al. (2024). Variable-stiffness prosthetic knee. MIT Media Lab.
+- Hogan, N. (1985). *Impedance control: An approach to manipulation*. ASME J. Dyn. Sys.
